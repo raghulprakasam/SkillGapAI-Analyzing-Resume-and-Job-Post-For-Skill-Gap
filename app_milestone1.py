@@ -1,16 +1,12 @@
-# ==========================================
-# SkillGapAI - Milestone 1: Data Ingestion & Parsing
-# Weeks 1–2
-# ==========================================
-
 import streamlit as st
 import docx2txt
 import PyPDF2
 import re
+import io # Import io for creating in-memory buffers
 
-# ------------------------------------------
+# ==========================================
 # PAGE CONFIGURATION
-# ------------------------------------------
+# ==========================================
 st.set_page_config(page_title="SkillGapAI - Milestone 1", layout="wide")
 
 st.markdown(
@@ -27,31 +23,51 @@ st.markdown(
 # ------------------------------------------
 # FUNCTIONS
 # ------------------------------------------
-def clean_text(text):
+def clean_text(text: str) -> str:
     """Normalize text by removing extra spaces and line breaks"""
+    # Replace all whitespace characters (including newlines) with a single space
     text = re.sub(r'\s+', ' ', text)
-    text = text.replace('\r', '').replace('\n', ' ')
+    # The redundant replace calls are removed since re.sub handles them
     return text.strip()
 
+@st.cache_data(show_spinner=False)
 def extract_text(uploaded_file):
-    """Extract plain text from PDF, DOCX, or TXT"""
+    """
+    Extract plain text from PDF, DOCX, or TXT using a binary buffer.
+    Caching improves performance when the file remains the same.
+    """
     text = ""
+    file_name = uploaded_file.name.lower()
+    
+    # Read the file's content into a BytesIO buffer for consistent processing
+    file_buffer = io.BytesIO(uploaded_file.read())
+    file_buffer.seek(0) # Ensure the pointer is at the start for reliable reading
+    
     try:
-        if uploaded_file.name.lower().endswith(".pdf"):
-            pdf_reader = PyPDF2.PdfReader(uploaded_file)
+        if file_name.endswith(".pdf"):
+            pdf_reader = PyPDF2.PdfReader(file_buffer)
             for page in pdf_reader.pages:
                 content = page.extract_text()
                 if content:
                     text += content + "\n"
-        elif uploaded_file.name.lower().endswith(".docx"):
-            text = docx2txt.process(uploaded_file)
-        elif uploaded_file.name.lower().endswith(".txt"):
-            text = uploaded_file.read().decode("utf-8")
+                    
+        elif file_name.endswith(".docx"):
+            # docx2txt can process the memory buffer directly
+            text = docx2txt.process(file_buffer)
+            
+        elif file_name.endswith(".txt"):
+            # For TXT, decode the binary content of the buffer
+            text = file_buffer.read().decode("utf-8")
+            
         else:
             st.error("❌ Unsupported file format.")
+            return ""
+            
         return clean_text(text)
+        
     except Exception as e:
         st.error(f"⚠️ Error extracting text: {e}")
+        st.exception(e) # Display the detailed exception for debugging
         return ""
 
 # ------------------------------------------
@@ -71,21 +87,27 @@ with col2:
     st.markdown("### 🧾 Parsed Document Preview")
 
     if uploaded_file:
+        # Pass the uploaded file object to the cached function
         with st.spinner("🔍 Extracting and cleaning text..."):
             extracted_text = extract_text(uploaded_file)
-        st.success(f"✅ Successfully parsed: {uploaded_file.name}")
+            
+        if extracted_text:
+            st.success(f"✅ Successfully parsed: {uploaded_file.name}")
 
-        # Preview parsed data
-        st.text_area("Extracted & Cleaned Text", extracted_text[:4000], height=350)
-        st.caption(f"Characters: {len(extracted_text)} | Words: {len(extracted_text.split())}")
+            # Preview parsed data
+            st.text_area("Extracted & Cleaned Text", extracted_text[:4000], height=350)
+            word_count = len(extracted_text.split())
+            st.caption(f"Characters: {len(extracted_text)} | Words: {word_count}")
 
-        # --- Download Parsed Data ---
-        st.download_button(
-            label="💾 Download Parsed Text",
-            data=extracted_text,
-            file_name=f"parsed_{uploaded_file.name.split('.')[0]}.txt",
-            mime="text/plain"
-        )
+            # --- Download Parsed Data ---
+            st.download_button(
+                label="💾 Download Parsed Text",
+                data=extracted_text,
+                file_name=f"parsed_{uploaded_file.name.split('.')[0]}.txt",
+                mime="text/plain"
+            )
+        else:
+            st.error("Extraction failed or file was empty. Check the file content.")
     else:
         st.warning("Upload a file to see and download the parsed text preview here.")
 
